@@ -1,10 +1,12 @@
 import asyncio
+from pathlib import Path
 
 import discord
 from discord.ext import commands
 from discord.ext.commands import Bot
 from loguru import logger
 
+import am4
 from am4.utils import __version__ as am4utils_version
 from am4.utils.db import init as utils_init
 
@@ -27,7 +29,7 @@ bot = Bot(command_prefix=cfg.bot.COMMAND_PREFIX, intents=intents, help_command=N
 @bot.event
 async def on_ready():
     await channels.init(bot)
-    logger.info(f'logged in as {bot.user} on {", ".join([g.name for g in bot.guilds])}')
+    logger.info(f"logged in as {bot.user} on {', '.join([g.name for g in bot.guilds])}")
     logger.info(f"am4.utils version {am4utils_version}")
 
 
@@ -75,13 +77,21 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
 
 
 async def start(db_done: asyncio.Event):
+    venv_path = am4.__path__[-1]
+    if "site-packages" not in venv_path:
+        logger.warning("am4 should be installed in a virtual environment")
+
     await db_done.wait()
-    utils_init()
+
+    from .plots import MPLMap
+
+    mpl_map = MPLMap()
+    utils_init(home_dir=venv_path)
     await bot.add_cog(HelpCog(bot))
     await bot.add_cog(SettingsCog(bot))
     await bot.add_cog(AirportCog(bot))
     await bot.add_cog(AircraftCog(bot))
     await bot.add_cog(RouteCog(bot))
-    await bot.add_cog(RoutesCog(bot))
+    await bot.add_cog(RoutesCog(bot, mpl_map))
     await bot.add_cog(PriceCog(bot))
     await bot.start(cfg.bot.DISCORD_TOKEN)

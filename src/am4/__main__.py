@@ -5,8 +5,6 @@ from typing import Annotated, Literal, Optional
 import rich
 import typer
 
-from .config import cfg, get_from_file
-
 app = typer.Typer()
 app_config = typer.Typer()
 app.add_typer(app_config, name="cfg", help="config commands")
@@ -14,6 +12,8 @@ app.add_typer(app_config, name="cfg", help="config commands")
 
 @app_config.command(name="show", help="show config")
 def cfg_show():
+    from .config import cfg
+
     rich.print(cfg)
     if cfg._source is None:
         rich.print("[yellow]using default - run `am4 cfg set <path/to/config.json>!`[/yellow]")
@@ -23,6 +23,8 @@ def cfg_show():
 
 @app_config.command(name="set", help="set config from a file")
 def cfg_set(fp: Path):
+    from .config import get_from_file
+
     cfg_new = get_from_file(fp)
     cfg_new.save_to_internal()
     rich.print(f"succesfully set from {cfg_new._source.absolute()}.")
@@ -40,9 +42,7 @@ def start(components: Annotated[Optional[str], typer.Argument()] = None):
 
     async def main():
         db_done = asyncio.Event()
-        from .db import start as start_db
-
-        tasks = [asyncio.create_task(start_db(db_done))]
+        tasks = []
         if "api" in components:
             from .api.fapi import start as start_fapi
 
@@ -51,6 +51,9 @@ def start(components: Annotated[Optional[str], typer.Argument()] = None):
             from .bot import start as start_bot
 
             tasks.append(asyncio.create_task(start_bot(db_done)))
+        from .db import start as start_db
+
+        tasks = [asyncio.create_task(start_db(db_done))]
 
         await asyncio.gather(*tasks)
 

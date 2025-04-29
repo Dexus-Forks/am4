@@ -1,24 +1,29 @@
 pub mod custom;
 pub mod db;
 
-use rkyv::{Archive as Ra, Deserialize as Rd, Serialize as Rs};
-use serde::Deserialize;
-use std::fmt;
+use derive_more::{Constructor, Display, From, Into};
 use std::str::FromStr;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Ra, Rd, Rs)]
-#[archive(check_bytes)]
+#[cfg(feature = "rkyv")]
+use rkyv::{Archive as Ra, Deserialize as Rd, Serialize as Rs};
+#[cfg(feature = "serde")]
+use serde::Deserialize;
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
 pub struct Aircraft {
     pub id: Id,
     pub shortname: ShortName,
     pub manufacturer: String,
     pub name: Name,
-    #[serde(rename = "type")]
-    pub ac_type: AircraftType,
+    pub r#type: AircraftType,
     pub priority: EnginePriority,
     pub eid: u16,
     pub ename: String,
+    /// Flight speed. When loaded from the database, this represents the *realism* base speed
+    /// and [custom aircraft][custom::CustomAircraft] mutate this according to the user settings (e.g. easy, 4x).
     pub speed: f32,
     pub fuel: f32,
     pub co2: f32,
@@ -33,14 +38,17 @@ pub struct Aircraft {
     pub crew: u8,
     pub engineers: u8,
     pub technicians: u8,
+    /// Filename of the image. Does not include the path nor extension.
     pub img: String,
     pub wingspan: u8,
     pub length: u8,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct Id(pub u16);
+/// Internal game aircraft id
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, Constructor, Into)]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+pub struct Id(u16);
 
 impl FromStr for Id {
     type Err = AircraftError;
@@ -52,9 +60,11 @@ impl FromStr for Id {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct ShortName(pub String);
+/// ICAO 8643 aircraft type designator
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash, Into)]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+pub struct ShortName(String);
 
 impl FromStr for ShortName {
     type Err = AircraftError;
@@ -67,9 +77,11 @@ impl FromStr for ShortName {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct Name(pub String);
+/// Name of the aircraft model, e.g. A380-800
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash, Into)]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+pub struct Name(String);
 
 impl FromStr for Name {
     type Err = AircraftError;
@@ -82,9 +94,11 @@ impl FromStr for Name {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct EnginePriority(pub u8);
+/// The priority of the engine variant. The engine with the greatest flight speed will be 0.
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, Constructor, Into, From)]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+pub struct EnginePriority(u8);
 
 impl FromStr for EnginePriority {
     type Err = AircraftError;
@@ -96,18 +110,18 @@ impl FromStr for EnginePriority {
     }
 }
 
-impl fmt::Display for EnginePriority {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-#[serde(rename_all = "lowercase")]
+// TODO: add charter
+#[derive(Debug, Clone, Display, PartialEq)]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize),
+    serde(rename_all = "lowercase")
+)]
 pub enum AircraftType {
     Pax,
     Cargo,
+    #[display("VIP")]
     Vip,
 }
 
@@ -124,6 +138,7 @@ impl FromStr for AircraftType {
     }
 }
 
+// TODO: wrap ParseIntError and manually derive serde and rkyv
 #[derive(Debug, Error)]
 pub enum AircraftError {
     #[error("Invalid aircraft ID: {0}")]

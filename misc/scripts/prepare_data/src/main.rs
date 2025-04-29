@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 mod ac_image;
 mod utils;
+
 use am4::{AC_FILENAME, AP_FILENAME, DEM_FILENAME0, DEM_FILENAME1};
 use polars::frame::row::Row;
 use polars::prelude::*;
@@ -11,7 +12,7 @@ use std::str::FromStr;
 use utils::*;
 
 fn convert_routes(out_dir: &Path) {
-    use am4::route::demand::pax::PaxDemand;
+    use am4::route::demand::PaxDemand;
 
     let mut schema = Schema::new();
     schema.with_column("oid".into(), DataType::UInt32);
@@ -22,7 +23,7 @@ fn convert_routes(out_dir: &Path) {
     schema.with_column("d".into(), DataType::Float64);
     schema.with_column("rwy".into(), DataType::UInt16);
 
-    let lf = LazyCsvReader::new("../../private/community/db-data/routes.csv")
+    let lf = LazyCsvReader::new("../../../../am4-private/community/db-data/routes.csv")
         .with_has_header(false)
         .with_schema(Some(Arc::new(schema)))
         .finish()
@@ -95,7 +96,7 @@ fn convert_airports(out_dir: &Path) {
     schema.with_column("hub_cost".into(), DataType::UInt32);
     schema.with_column("rwy_codes".into(), DataType::String);
 
-    let lf = LazyCsvReader::new("../../private/community/db-data/airports.csv")
+    let lf = LazyCsvReader::new("../../../../am4-private/community/db-data/airports.csv")
         .with_has_header(true)
         .with_schema(Some(Arc::new(schema)))
         .finish()
@@ -123,7 +124,8 @@ fn convert_airports(out_dir: &Path) {
         };
 
         airports.push(Airport {
-            idx: Id(get_u16(r[0].clone())),
+            idx: i,
+            id: Id::new(get_u16(r[0].clone())),
             name: Name::from_str(get_str(r[1].clone())).unwrap(),
             fullname: get_str(r[2].clone()).to_string(),
             country: get_str(r[3].clone()).to_string(),
@@ -142,7 +144,7 @@ fn convert_airports(out_dir: &Path) {
     }
     println!("{:?}", airports.len());
     let mut file = std::fs::File::create(out_dir.join(AP_FILENAME)).unwrap();
-    let b = rkyv::to_bytes::<Vec<Airport>, 502684>(&airports).unwrap();
+    let b = rkyv::to_bytes::<Vec<Airport>, 518312>(&airports).unwrap();
     file.write_all(&b).unwrap();
 
     println!("wrote {:?} bytes to {:?}", b.len(), file);
@@ -178,7 +180,7 @@ fn convert_aircrafts(out_dir: &Path) {
     schema.with_column("wingspan".into(), DataType::UInt8);
     schema.with_column("length".into(), DataType::UInt8);
 
-    let lf = LazyCsvReader::new("../../private/community/db-data/aircrafts.csv")
+    let lf = LazyCsvReader::new("../../../../am4-private/community/db-data/aircrafts.csv")
         .with_has_header(true)
         .with_schema(Some(Arc::new(schema)))
         .finish()
@@ -200,17 +202,17 @@ fn convert_aircrafts(out_dir: &Path) {
         let r = df.get_row(i).unwrap().0;
 
         aircrafts.push(Aircraft {
-            id: Id(get_u16(r[0].clone())),
+            id: Id::new(get_u16(r[0].clone())),
             shortname: ShortName::from_str(get_str(r[1].clone())).unwrap(),
             manufacturer: get_str(r[2].clone()).to_string(),
             name: Name::from_str(get_str(r[3].clone())).unwrap(),
-            ac_type: match get_u8(r[4].clone()) {
+            r#type: match get_u8(r[4].clone()) {
                 0 => AircraftType::Pax,
                 1 => AircraftType::Cargo,
                 2 => AircraftType::Vip,
                 _ => panic!("unknown aircraft type"),
             },
-            priority: EnginePriority(get_u8(r[5].clone())),
+            priority: EnginePriority::new(get_u8(r[5].clone())),
             eid: get_u16(r[6].clone()),
             ename: get_str(r[7].clone()).to_string(),
             speed: get_f32(r[8].clone()),

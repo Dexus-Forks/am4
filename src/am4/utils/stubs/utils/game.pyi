@@ -261,6 +261,7 @@ class User:
         def value(self) -> int:
             ...
     accumulated_count: int
+    cargo_load: float
     co2_price: int
     co2_training: int
     discord_id: int

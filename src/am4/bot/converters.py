@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, List, Literal
 
 from discord.ext import commands
 from pydantic import BaseModel, Field
@@ -23,6 +23,7 @@ from .errors import (
     ConstraintValidationError,
     PriceValidationError,
     SettingValueValidationError,
+    TooManyAirportsError,
     TPDValidationError,
 )
 
@@ -34,6 +35,24 @@ class AirportCvtr(commands.Converter):
         if not acsr.ap.valid:
             raise AirportNotFoundError(acsr)
         return acsr
+
+
+class MultiAirportCvtr(commands.Converter):
+    async def convert(self, ctx: commands.Context, query: str) -> List[Airport.SearchResult]:
+        queries = query.split(",")
+        MAX_AIRPORTS = 24  # prevent DoS attacks & stay within upload limits
+        if (num_airports := len(queries)) > MAX_AIRPORTS:
+            raise TooManyAirportsError(num_airports, max_airports=MAX_AIRPORTS)
+
+        acsr_list = []
+        for q in queries:
+            acsr = Airport.search(q)
+            if not acsr.ap.valid:
+                raise AirportNotFoundError(acsr)
+            acsr_list.append(acsr)
+        # TODO: handle duplicate airports?
+
+        return acsr_list
 
 
 class AircraftCvtr(commands.Converter):
@@ -69,7 +88,7 @@ class SettingValueCvtr(commands.Converter):
         try:
             u_new = model.__pydantic_validator__.validate_assignment(model.model_construct(), key, value)
         except ValidationError as err:
-            if key == "load":
+            if key == "load" or key == "cargo_load":
                 err.errors()[0]["msg"] += " Load factor is a percentage: if you want to set say 87%, use `87%`."
             raise SettingValueValidationError(err)
         v_new = getattr(u_new, key)
@@ -82,13 +101,13 @@ class TPDCvtr(commands.Converter):
     async def convert(self, ctx: commands.Context, tpdo: str) -> tuple[int | None, AircraftRoute.Options.TPDMode]:
         if tpdo is None or (tpd := tpdo.strip().lower()) == "auto":
             return self._default
-        allow_multiple_ac = tpd.endswith("!")
+        strict = tpd.endswith("!")
         try:
             return (
-                acro_cast("trips_per_day_per_ac", tpd[:-1] if allow_multiple_ac else tpd).trips_per_day_per_ac,
-                AircraftRoute.Options.TPDMode.STRICT_ALLOW_MULTIPLE_AC
-                if allow_multiple_ac
-                else AircraftRoute.Options.TPDMode.STRICT,
+                acro_cast("trips_per_day_per_ac", tpd[:-1] if strict else tpd).trips_per_day_per_ac,
+                AircraftRoute.Options.TPDMode.STRICT
+                if strict
+                else AircraftRoute.Options.TPDMode.STRICT_ALLOW_MULTIPLE_AC,
             )
         except ValidationError as e:
             raise TPDValidationError(e)

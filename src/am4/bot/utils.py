@@ -43,9 +43,8 @@ IJSON = "<:json:1210823838334586880>"
 HELP_TPD = (
     "**Number of departures per day, per aircraft**\n"
     "- if not provided or set to `AUTO`, the bot will attempt to maximise it.\n"
-    "- if you provide a number, the bot will fly **one aircraft** with this number of departures per day.\n"
-    "  - you may want to assign multiple aircraft to the same route to avoid wasting demand. "
-    "Append a `!` at the end to enable cramming (recommended)."
+    "- if you provide a number, the bot will try to assign more aircraft to the same route to avoid wasting demand.\n"
+    "  - to disable the cramming, append a `!` at the end (not recommended)."
 )
 HELP_CFG_ALG = (
     "**Configuration Algorithm**\n"
@@ -58,7 +57,7 @@ HELP_SETTING_KEY = (
     "**The setting key** - some important ones are:\n"
     f"- `fourx`: {HELP_U_FOURX}\n"
     f"- `income_loss_tol`: {HELP_U_INCOME_LOSS_TOL}\n"
-    f"- `load`: {HELP_U_LOAD}\n"
+    f"- `load` and `cargo_load`: {HELP_U_LOAD}\n"
 )
 
 _SP100 = " "
@@ -124,6 +123,7 @@ def format_flight_time(t: float, short: bool = False) -> str:
     return (f"{int(d)}D" if d else "") + time.strftime(fs, time.gmtime(hrs))
 
 
+# TODO: refactor to accept strings instead
 def format_ap_short(ap: Airport, mode: Literal[0, 1, 2]) -> str:
     indicator = "┏" if mode == 0 else "┣" if mode == 1 else "┗"
     return f"`{indicator} {ap.iata}` {ap.name}, {ap.country}"

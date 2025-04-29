@@ -250,13 +250,16 @@ class AircraftRoute:
     def warnings(self) -> list[AircraftRoute.Warning]:
         ...
 class Destination:
-    def to_dict(self) -> dict:
+    def to_dict(self, include_origin: bool = False) -> dict:
         ...
     @property
     def ac_route(self) -> AircraftRoute:
         ...
     @property
     def airport(self) -> am4.utils.airport.Airport:
+        ...
+    @property
+    def origin(self) -> am4.utils.airport.Airport:
         ...
 class Route:
     @staticmethod
@@ -284,9 +287,9 @@ class Route:
     def valid(self) -> bool:
         ...
 class RoutesSearch:
-    def __init__(self, ap0: am4.utils.airport.Airport, ac: am4.utils.aircraft.Aircraft, options: AircraftRoute.Options = AircraftRoute.Options(), user: am4.utils.game.User = am4.utils.game.User.Default()) -> None:
+    def __init__(self, ap0: list[am4.utils.airport.Airport], ac: am4.utils.aircraft.Aircraft, options: AircraftRoute.Options = AircraftRoute.Options(), user: am4.utils.game.User = am4.utils.game.User.Default()) -> None:
         ...
-    def _get_columns(self, arg0: list[Destination]) -> dict[str, list]:
+    def _get_columns(self, dests: list[Destination], include_origin: bool = False) -> dict[str, list]:
         ...
     def get(self) -> list[Destination]:
         ...

@@ -1,14 +1,22 @@
 pub mod db;
 
-use rkyv::{Archive as Ra, Deserialize as Rd, Serialize as Rs};
-use serde::Deserialize;
+use derive_more::{Constructor, Display, Into};
 use std::str::FromStr;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Ra, Rd, Rs)]
-#[archive(check_bytes)]
+#[cfg(feature = "rkyv")]
+use rkyv::{Archive as Ra, Deserialize as Rd, Serialize as Rs};
+#[cfg(feature = "serde")]
+use serde::Deserialize;
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
 pub struct Airport {
-    pub idx: Id,
+    /// Index for the demands and distance matrix.
+    pub idx: usize,
+    /// Game airport id. Not necessarily equal to [Airport::idx]
+    pub id: Id,
     pub name: Name,
     pub fullname: String,
     pub country: String,
@@ -16,15 +24,19 @@ pub struct Airport {
     pub iata: Iata,
     pub icao: Icao,
     pub location: Point,
+    /// Runway length, ft.
     pub rwy: u16,
+    /// Market, percent.
     pub market: u8,
+    /// Base hub cost, influenced by the tier.
     pub hub_cost: u32,
     pub rwy_codes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct Id(pub u16);
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, Constructor, Into)]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+pub struct Id(u16);
 
 impl FromStr for Id {
     type Err = AirportError;
@@ -34,9 +46,10 @@ impl FromStr for Id {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct Name(pub String);
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash, Into)]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+pub struct Name(String);
 
 impl FromStr for Name {
     type Err = AirportError;
@@ -49,9 +62,10 @@ impl FromStr for Name {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct Iata(pub String);
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash, Into)]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+pub struct Iata(String);
 
 impl FromStr for Iata {
     type Err = AirportError;
@@ -64,9 +78,10 @@ impl FromStr for Iata {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash, Ra, Rd, Rs)]
-#[archive(check_bytes)]
-pub struct Icao(pub String);
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash, Into)]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
+pub struct Icao(String);
 
 impl FromStr for Icao {
     type Err = AirportError;
@@ -79,8 +94,10 @@ impl FromStr for Icao {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Ra, Rd, Rs)]
-#[archive(check_bytes)]
+#[derive(Debug, Clone, Display, PartialEq)]
+#[display("({lng}, {lat})")]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "rkyv", derive(Ra, Rd, Rs), archive(check_bytes))]
 pub struct Point {
     pub lng: f32,
     pub lat: f32,

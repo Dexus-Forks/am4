@@ -45,6 +45,7 @@ void tpd_sweep(
     std::function<double()> est_max_tpd,
     std::function<Cfg(double)> calc_cfg,
     std::function<uint32_t(const Cfg&)> calc_max_income,
+    const float ac_load,
     AircraftRoute* ar
 ) {
     // first, calculate the configuration for 1 aircraft
@@ -73,7 +74,7 @@ void tpd_sweep(
     if (options.tpd_mode == AircraftRoute::Options::TPDMode::STRICT) {
         ar->config = cfg;
         ar->max_income = max_income;
-        ar->income = max_income * user.load;
+        ar->income = max_income * ac_load;
         ar->num_ac = 1;
         ar->trips_per_day_per_ac = tpdpa;
         ar->valid = true;
@@ -108,7 +109,7 @@ void tpd_sweep(
     }
     ar->config = cfg;
     ar->max_income = max_income;
-    ar->income = max_income * user.load;
+    ar->income = max_income * ac_load;
     ar->num_ac = num_ac;
     ar->trips_per_day_per_ac = tpdpa;
     ar->valid = true;
@@ -144,7 +145,7 @@ inline void AircraftRoute::update_pax_details(
     auto calc_max_income = [&](const Aircraft::PaxConfig& cfg) -> uint32_t {
         return (cfg.y * tkt.y + cfg.j * tkt.j + cfg.f * tkt.f);
     };
-    tpd_sweep<Aircraft::PaxConfig>(user, options, est_max_tpd, calc_cfg, calc_max_income, this);
+    tpd_sweep<Aircraft::PaxConfig>(user, options, est_max_tpd, calc_cfg, calc_max_income, user.load, this);
     this->ticket = tkt;
 }
 
@@ -167,7 +168,8 @@ inline void AircraftRoute::update_cargo_details(
     };
     auto calc_cfg = [&](double trips_per_day) {
         return Aircraft::CargoConfig::calc_cargo_conf(
-            load_adj_cd / user.load / trips_per_day, ac_capacity, user.l_training, user.h_training, config_algorithm
+            load_adj_cd / user.cargo_load / trips_per_day, ac_capacity, user.l_training, user.h_training,
+            config_algorithm
         );
     };
     const CargoTicket tkt = CargoTicket::from_optimal(this->route.direct_distance, user.game_mode);
@@ -175,7 +177,7 @@ inline void AircraftRoute::update_cargo_details(
         return ((1 + user.l_training / 100.0) * cfg.l * 0.7 * tkt.l + (1 + user.h_training / 100.0) * cfg.h * tkt.h) *
                ac_capacity / 100.0;
     };
-    tpd_sweep<Aircraft::CargoConfig>(user, options, est_max_tpd, calc_cfg, calc_income, this);
+    tpd_sweep<Aircraft::CargoConfig>(user, options, est_max_tpd, calc_cfg, calc_income, user.cargo_load, this);
     this->ticket = tkt;
 }
 
@@ -205,7 +207,9 @@ AircraftRoute AircraftRoute::create(
     acr._ac_type = ac.type;
     acr.max_tpd = std::nullopt;
 
-    if (user.game_mode == User::GameMode::REALISM && a1.rwy < ac.rwy) {
+    if (user.game_mode == User::GameMode::REALISM && (a1.rwy < ac.rwy)) {
+        // NOTE: departing from runways that are too short is actually allowed
+        // for realism player. just exercise caution not to make routes the other way
         acr.warnings.push_back(AircraftRoute::Warning::ERR_RWY_TOO_SHORT);
         return acr;
     }
@@ -359,10 +363,11 @@ inline double AircraftRoute::calc_fuel(const Aircraft& ac, double distance, cons
 inline double AircraftRoute::calc_co2(
     const Aircraft& ac, const Aircraft::PaxConfig& cfg, double distance, const User& user, uint8_t ci
 ) {
+    double ac_load = ac.type == Aircraft::Type::CARGO ? user.cargo_load : user.load;
     return (
         (1 - user.co2_training / 100.0) *
-        (ceil(distance * 100.0) / 100.0 * ac.co2 * ((cfg.y + cfg.j * 2 + cfg.f * 3) * user.load) +
-         (cfg.y + cfg.j + cfg.f)) *
+        (ceil(distance * 100.0) / 100.0 * ac.co2 * ((cfg.y + cfg.j * 2 + cfg.f * 3) * ac_load) + (cfg.y + cfg.j + cfg.f)
+        ) *
         (ci / 2000.0 + 0.9)
     );
 }
@@ -370,10 +375,11 @@ inline double AircraftRoute::calc_co2(
 inline double AircraftRoute::calc_co2(
     const Aircraft& ac, const Aircraft::CargoConfig& cfg, double distance, const User& user, uint8_t ci
 ) {
+    double ac_load = ac.type == Aircraft::Type::CARGO ? user.cargo_load : user.load;
     return (
         (1 - user.co2_training / 100.0) *
         (ceil(distance * 100.0) / 100.0 * ac.co2 *
-             ((cfg.l / 100.0 * 0.7 / 1000.0 + cfg.h / 100.0 / 500.0) * user.load * ac.capacity) +
+             ((cfg.l / 100.0 * 0.7 / 1000.0 + cfg.h / 100.0 / 500.0) * ac_load * ac.capacity) +
          ((cfg.l / 100.0 * 0.7 + cfg.h / 100.0) * ac.capacity)) *
         (ci / 2000.0 + 0.9)
     );
@@ -466,19 +472,21 @@ const string AircraftRoute::repr(const AircraftRoute& ar) {
     return s;
 }
 
-Destination::Destination(const Airport& destination, const AircraftRoute& route)
-    : airport(destination), ac_route(route) {}
+Destination::Destination(const Airport& origin, const Airport& destination, const AircraftRoute& route)
+    : origin(origin), airport(destination), ac_route(route) {}
 
 std::vector<Destination> RoutesSearch::get() const {
     std::vector<Destination> destinations;
     const auto& db = Database::Client();
 
     const uint16_t rwy_requirement = this->user.game_mode == User::GameMode::EASY ? 0 : this->aircraft.rwy;
-    for (const Airport& ap : db->airports) {
-        if (ap.rwy < rwy_requirement || ap.id == this->origin.id) continue;
-        const AircraftRoute ar = AircraftRoute::create(this->origin, ap, this->aircraft, this->options, this->user);
-        if (!ar.valid) continue;
-        destinations.emplace_back(ap, ar);
+    for (const Airport& origin : this->origins) {
+        for (const Airport& ap : db->airports) {
+            if (ap.rwy < rwy_requirement || ap.id == origin.id) continue;
+            const AircraftRoute ar = AircraftRoute::create(origin, ap, this->aircraft, this->options, this->user);
+            if (!ar.valid) continue;
+            destinations.emplace_back(origin, ap, ar);
+        }
     }
     auto cmp = this->options.sort_by == AircraftRoute::Options::SortBy::PER_TRIP
                    ? [](const Destination& a, const Destination& b) { return a.ac_route.profit > b.ac_route.profit; }
@@ -573,75 +581,88 @@ py::dict to_dict(const AircraftRoute& ar) {
     return d;
 }
 
-py::dict to_dict(const Destination& d) {
-    return py::dict("airport"_a = to_dict(d.airport), "ac_route"_a = to_dict(d.ac_route));
+py::dict to_dict(const Destination& d, bool include_origin) {
+    py::dict dest;
+    if (include_origin) {
+        // not including everything to save bandwidth
+        dest["origin"] = py::dict("id"_a = d.origin.id, "iata"_a = d.origin.iata, "icao"_a = d.origin.icao);
+    }
+    dest["airport"] = to_dict(d.airport);
+    dest["ac_route"] = to_dict(d.ac_route);
+    return dest;
 }
 
-std::map<string, py::list> _get_columns(const RoutesSearch& rs, const vector<Destination>& dests) {
+std::map<string, py::list> _get_columns(const RoutesSearch& rs, const vector<Destination>& dests, bool include_origin) {
     // for use in csv generation via pyarrow.Table.from_pydict & downstream statistical analysis
     // assuming dests to be all valid
     std::map<string, py::list> cols;
     for (const Destination& dest : dests) {
-        cols["00|dest.id"].append(dest.airport.id);
-        cols["01|dest.name"].append(dest.airport.name);
-        cols["02|dest.country"].append(dest.airport.country);
-        cols["03|dest.iata"].append(dest.airport.iata);
-        cols["04|dest.icao"].append(dest.airport.icao);
+        if (include_origin) {
+            cols["00|orig.id"].append(dest.origin.id);
+            cols["03|orig.iata"].append(dest.origin.iata);
+            cols["04|orig.icao"].append(dest.origin.icao);
+        }
+        cols["10|dest.id"].append(dest.airport.id);
+        cols["11|dest.name"].append(dest.airport.name);
+        cols["12|dest.country"].append(dest.airport.country);
+        cols["13|dest.iata"].append(dest.airport.iata);
+        cols["14|dest.icao"].append(dest.airport.icao);
+        // for use in map display
         cols["98|dest.lat"].append(dest.airport.lat);
         cols["99|dest.lng"].append(dest.airport.lng);
         auto& acr = dest.ac_route;
         if (dest.ac_route.stopover.exists) {
-            cols["05|stop.id"].append(acr.stopover.airport.id);
-            cols["06|stop.name"].append(acr.stopover.airport.name);
-            cols["07|stop.country"].append(acr.stopover.airport.country);
-            cols["08|stop.iata"].append(acr.stopover.airport.iata);
-            cols["09|stop.icao"].append(acr.stopover.airport.icao);
-            cols["10|full_dist"].append(acr.stopover.full_distance);
+            cols["15|stop.id"].append(acr.stopover.airport.id);
+            cols["16|stop.name"].append(acr.stopover.airport.name);
+            cols["17|stop.country"].append(acr.stopover.airport.country);
+            cols["18|stop.iata"].append(acr.stopover.airport.iata);
+            cols["19|stop.icao"].append(acr.stopover.airport.icao);
+            cols["20|full_dist"].append(acr.stopover.full_distance);
         } else {
-            cols["05|stop.id"].append(py::none());
-            cols["06|stop.name"].append(py::none());
-            cols["07|stop.country"].append(py::none());
-            cols["08|stop.iata"].append(py::none());
-            cols["09|stop.icao"].append(py::none());
-            cols["10|full_dist"].append(py::none());
+            cols["15|stop.id"].append(py::none());
+            cols["16|stop.name"].append(py::none());
+            cols["17|stop.country"].append(py::none());
+            cols["18|stop.iata"].append(py::none());
+            cols["19|stop.icao"].append(py::none());
+            cols["20|full_dist"].append(py::none());
         }
         if (rs.aircraft.type == Aircraft::Type::CARGO) {
             auto dem = CargoDemand(acr.route.pax_demand);
             auto& cfg = get<Aircraft::CargoConfig>(acr.config);
             auto& tkt = get<CargoTicket>(acr.ticket);
-            cols["11|dem.l"].append(dem.l);
-            cols["12|dem.h"].append(dem.h);
-            cols["14|cfg.l"].append(cfg.l);
-            cols["15|cfg.h"].append(cfg.h);
-            cols["17|tkt.l"].append(tkt.l);
-            cols["18|tkt.h"].append(tkt.h);
+            cols["21|dem.l"].append(dem.l);
+            cols["22|dem.h"].append(dem.h);
+            cols["24|cfg.l"].append(cfg.l);
+            cols["25|cfg.h"].append(cfg.h);
+            cols["27|tkt.l"].append(tkt.l);
+            cols["28|tkt.h"].append(tkt.h);
         } else {
             auto& dem = acr.route.pax_demand;
             auto& cfg = get<Aircraft::PaxConfig>(acr.config);
             auto& tkt =
                 rs.aircraft.type == Aircraft::Type::VIP ? get<VIPTicket>(acr.ticket) : get<PaxTicket>(acr.ticket);
-            cols["11|dem.y"].append(dem.y);
-            cols["12|dem.j"].append(dem.j);
-            cols["13|dem.f"].append(dem.f);
-            cols["14|cfg.y"].append(cfg.y);
-            cols["15|cfg.j"].append(cfg.j);
-            cols["16|cfg.f"].append(cfg.f);
-            cols["17|tkt.y"].append(tkt.y);
-            cols["18|tkt.j"].append(tkt.j);
-            cols["19|tkt.f"].append(tkt.f);
+            cols["21|dem.y"].append(dem.y);
+            cols["22|dem.j"].append(dem.j);
+            cols["23|dem.f"].append(dem.f);
+            cols["24|cfg.y"].append(cfg.y);
+            cols["25|cfg.j"].append(cfg.j);
+            cols["26|cfg.f"].append(cfg.f);
+            cols["27|tkt.y"].append(tkt.y);
+            cols["28|tkt.j"].append(tkt.j);
+            cols["29|tkt.f"].append(tkt.f);
         }
-        cols["20|direct_dist"].append(acr.route.direct_distance);
-        cols["21|time"].append(acr.flight_time);
-        cols["22|trips_pd_pa"].append(acr.trips_per_day_per_ac);
-        cols["23|num_ac"].append(acr.num_ac);
-        cols["24|income"].append(acr.income);
-        cols["25|fuel"].append(acr.fuel);
-        cols["26|co2"].append(acr.co2);
-        cols["27|chk_cost"].append(acr.acheck_cost);
-        cols["28|repair_cost"].append(acr.repair_cost);
-        cols["29|profit_pt"].append(acr.profit);
-        cols["30|ci"].append(acr.ci);
-        cols["31|contrib_pt"].append(acr.contribution);
+        cols["30|direct_dist"].append(acr.route.direct_distance);
+        cols["31|time"].append(acr.flight_time);
+        cols["32|trips_pd_pa"].append(acr.trips_per_day_per_ac);
+        cols["33|num_ac"].append(acr.num_ac);
+        cols["34|income"].append(acr.income);
+        cols["35|fuel"].append(acr.fuel);
+        cols["36|co2"].append(acr.co2);
+        cols["37|chk_cost"].append(acr.acheck_cost);
+        cols["38|repair_cost"].append(acr.repair_cost);
+        cols["39|profit_pt"].append(acr.profit);
+        cols["40|ci"].append(acr.ci);
+        cols["41|contrib_pt"].append(acr.contribution);
     }
     return cols;
 }
@@ -767,17 +788,22 @@ void pybind_init_route(py::module_& m) {
         .def("to_dict", py::overload_cast<const AircraftRoute&>(&to_dict));
 
     py::class_<Destination>(m_route, "Destination")
+        .def_readonly("origin", &Destination::origin)
         .def_readonly("airport", &Destination::airport)
         .def_readonly("ac_route", &Destination::ac_route)
-        .def("to_dict", py::overload_cast<const Destination&>(&to_dict));
+        .def("to_dict", py::overload_cast<const Destination&, const bool>(&to_dict), "include_origin"_a = false);
 
     py::class_<RoutesSearch>(m_route, "RoutesSearch")
         .def(
-            py::init<const Airport&, const Aircraft&, const AircraftRoute::Options&, const User&>(), "ap0"_a, "ac"_a,
-            py::arg_v("options", AircraftRoute::Options(), "AircraftRoute.Options()"),
+            py::init<const vector<Airport>&, const Aircraft&, const AircraftRoute::Options&, const User&>(), "ap0"_a,
+            "ac"_a, py::arg_v("options", AircraftRoute::Options(), "AircraftRoute.Options()"),
             py::arg_v("user", User::Default(), "am4.utils.game.User.Default()")
         )
         .def("get", &RoutesSearch::get, py::call_guard<py::gil_scoped_release>())
-        .def("_get_columns", py::overload_cast<const RoutesSearch&, const vector<Destination>&>(&_get_columns));
+        .def(
+            "_get_columns",
+            py::overload_cast<const RoutesSearch&, const vector<Destination>&, const bool>(&_get_columns), "dests"_a,
+            "include_origin"_a = false
+        );
 }
 #endif
